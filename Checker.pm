@@ -3,14 +3,14 @@ package GMail::Checker;
 # Perl interface for a gmail wrapper
 # Allows you to check new mails, retrieving new mails and information about them
 
-# $Id: Checker.pm,v 1.02 2004/11/28 12:44:31 sacred Exp $
+# $Id: Checker.pm,v 1.03 2004/11/28 12:44:31 sacred Exp $
 
 use strict;
 use IO::Socket::SSL;
 use Carp;
 use vars qw($VERSION);
 
-$VERSION = 1.00;
+$VERSION = 1.03;
 
 sub version { sprintf("%f", $VERSION); }
 
@@ -251,7 +251,9 @@ __END__
 
 GMail::Checker - Wrapper for Gmail accounts
 
-version 1.00
+=head1 VERSION
+
+1.03
 
 =head1 SYNOPSIS
 
@@ -295,7 +297,7 @@ The implemented methods are :
 
 =over 4
 
-=item new
+=item C<new>
 
 
 Creates the wrapper object.
@@ -455,10 +457,6 @@ Closes the connection after sending a QUIT command so the server properly switch
 It doesn't take any argument for now.
 
 =back 4
-
-=head1 VERSION
-
-1.00
 
 =head1 COPYRIGHT
 
