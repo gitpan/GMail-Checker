@@ -1,9 +1,9 @@
 package GMail::Checker;
 
-# Perl interface to the gmail notifier
-# Allows you to check new mails, retrieving the number of new mails, sender and subject
+# Perl interface for a gmail wrapper
+# Allows you to check new mails, retrieving new mails and information about them
 
-# $Id: Checker.pm,v 1.01 2004/11/29 02:47:11 sacred Exp $
+# $Id: Checker.pm,v 1.02 2004/11/28 12:44:31 sacred Exp $
 
 use strict;
 use IO::Socket::SSL;
@@ -20,6 +20,8 @@ sub new {
     my %params = @_;
     $self->{SOCK} = undef;
     $self->{NBMSG} = 0;
+    $self->{USERNAME} = '';
+    $self->{PASSWORD} = '';
     my $class = ref($proto) || $proto;
     bless($self,$class);
     $self->login($params{"USERNAME"}, $params{"PASSWORD"}) if ((exists $params{"USERNAME"}) and (exists $params{"PASSWORD"}));
@@ -52,6 +54,9 @@ sub login {
     print $not "PASS $passwd\r\n";
     $line = <$not>;
     if ($line !~ /^\+OK/) { print "Wrong password, please check your settings.\n"; $self->close(); } # Same as above for PASS.
+    $self->{USERNAME} = $login;
+    $self->{PASSWORD} = $passwd;
+    return 1;
 }
 
 sub get_msg_nb_size {
@@ -235,6 +240,7 @@ sub close {
 	print $gsocket "QUIT\r\n"; # Sending a proper quit to the server so it can make an UPDATE in case DELE requests were sent.
 	$gsocket->close(SSL_ctx_free => 1); # Freeing the connection context
 	$self->{SOCK} = undef;
+	return 1;
     } else { croak "Operation failed, socket is not open.\n"; }
 }
 

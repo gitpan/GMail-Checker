@@ -3,6 +3,10 @@ GMail::Checker - Provides an adaptative interface to manage gmail accounts
 
 Changes :
 
+1.02 2004.11.29 Building a better test file for make test
+		Added return values for all functions, to check wether they were successfull or not.
+		Added USERNAME and PASSWORD hashes to the class.
+
 1.00 2004.11.28 Initial public release
 
 Description :
@@ -21,6 +25,11 @@ perl Makefile.PL
 make
 make test
 make install
+
+CPAN TESTERS:
+
+You can add a number of tests by modifying the t/use.t file if you have a gmail account.
+You will need to setup your username and password, uncomment the test routines and change the number of tests.
 
 Todo : 
 
