@@ -3,7 +3,7 @@ package GMail::Checker;
 # Perl interface to the gmail notifier
 # Allows you to check new mails, retrieving the number of new mails, sender and subject
 
-# $Id: Notifier.pm,v 1.00 2004/11/28 23:52:49 sacred Exp $
+# $Id: Checker.pm,v 1.01 2004/11/29 02:47:11 sacred Exp $
 
 use strict;
 use IO::Socket::SSL;
