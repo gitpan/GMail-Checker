@@ -3,6 +3,11 @@ GMail::Checker - Provides an adaptative interface to manage gmail accounts
 
 Changes :
 
+1.04 2004.12.13 Added MIME support
+		Attachements now come in an encapsuled array of hashes
+		Added msg_to_file() method which writes the raw message to a file.
+		Fixed documentation and test file typos
+		
 1.03 2004.11.29 Building a better test file for make test
 		Added return values for all functions, to check wether they were successfull or not.
 		Added USERNAME and PASSWORD hashes to the class.

@@ -5,7 +5,7 @@ use strict;
 use Test;
 use GMail::Checker;
 
-BEGIN {plan tests => 22}
+BEGIN {plan tests => 2}
 
 my $gwrapper = new GMail::Checker();
 my ($size, $unit) = $gwrapper->getsize(10000000);

@@ -3,14 +3,14 @@ package GMail::Checker;
 # Perl interface for a gmail wrapper
 # Allows you to check new mails, retrieving new mails and information about them
 
-# $Id: Checker.pm,v 1.03 2004/11/28 12:44:31 sacred Exp $
+# $Id: Checker.pm,v 1.04 2004/12/13 22:52:17 sacred Exp $
 
 use strict;
 use IO::Socket::SSL;
 use Carp;
 use vars qw($VERSION);
 
-$VERSION = 1.03;
+$VERSION = 1.04;
 
 sub version { sprintf("%f", $VERSION); }
 
@@ -119,6 +119,144 @@ sub get_msg_size {
     }
 }
 
+sub parse_plain_msg {
+    my $self = shift;
+    my ($gsocket, $msgl) = ($self->{SOCK}, "");
+    for (my $gans = <$gsocket>; $gans ne ".\r\n"; $gans = <$gsocket>) { 
+	$msgl .= $gans; 
+    }
+    return $msgl;
+}
+
+sub msg_to_file {
+    my $self = shift;
+    my $ind = shift;
+    my $gsocket = $self->{SOCK};
+    print $gsocket "RETR $ind\r\n";
+    my $gans = "";
+    my @uidl = $self->get_uidl(MSG => $ind);
+    open(MAILFILE, ">" .  $uidl[0]->{hash});
+    while ($gans ne ".\r\n") {
+	$gans = <$gsocket>;
+	print MAILFILE $gans;
+    }
+    close(MAILFILE);
+}
+
+sub parse_multipart_msg {
+    my $self = shift;
+    my ($gsocket, $msgl, $gans) = ($self->{SOCK}, "", "");
+    my %msgs = @_;
+    my @attachments = undef;
+    my ($content, $opt, $opttype, $encoding, $filename) =  (undef, undef, undef, undef, undef);
+    my $boundary = $msgs{opt};
+    while ($gans !~ /^--$boundary/) { $gans = <$gsocket>; }
+    
+    # Retrieving the message body [inline text].
+    while ($gans ne "\r\n") {
+	$gans = <$gsocket>;
+	if ($gans =~ /^Content-Type: ([a-z0-9\/-]+);\s?(?:([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?)?\r\n/i) {
+	    $content = $1;
+	    if (!defined $2) {
+		$gans = <$gsocket>;
+		$gans =~ /\s+([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?\r\n/i;
+		$opt = $2;
+		$opttype = $1;
+	    } else { $opt = $3; $opttype = $2; } # Content options (eg. name, charset)
+	}
+	if ($gans =~ /^Content-Transfer-Encoding: (7bit|8bit|binary|base64|quote-printable|ietf-token|x-token)\r\n/i) { 
+	    $encoding = $1;
+	}
+    }
+    do {
+	$gans = <$gsocket>;
+	$msgs{body} .= $gans unless $gans =~ /^--$boundary/;
+    } while (($gans ne ".\r\n") && ($gans !~ /^--$boundary/i));
+    $msgs{contentmsg} = $content;
+    $msgs{optmsg} = $opt;
+    $msgs{opttypemsg} = $opttype;
+    $msgs{encoding} = $encoding;
+    
+    # Retrieving attachements.
+
+    for (my $i = -1; $gans ne ".\r\n";) {
+	if ($gans =~ /^--$boundary/) {
+	    $i++;
+	    ($content, $opt, $opttype, $encoding, $filename) =  ("","","","","");
+	    $gans = <$gsocket>;
+	    while ($gans !~ /^(?:--$boundary|\.\r\n)/) {
+		if ($gans =~ /^Content-Type: ([a-z0-9\/-]+);\s?(?:([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?)?\r\n/i) {
+		    $content = $1;
+		    if (!defined $2) {
+			$gans = <$gsocket>;
+			$gans =~ /\s+([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?\r\n/i;
+			$opt = $2;
+			$opttype = $1;
+		    } else { $opt = $3; $opttype = $2; } # Content options (eg. name, charset)
+		}
+		if ($gans =~ /^Content-Transfer-Encoding: (7bit|8bit|binary|base64|quote-printable|ietf-token|x-token)\r\n/i) { 
+		    $encoding = $1;
+		} 
+		if ($gans =~ /^Content-Disposition: ([a-z]+);(?:\s+filename=\"?(\S+)\"?)?/) {
+		    if ($1 eq "attachment") {
+			if (!defined $2) {
+			    $gans = <$gsocket>;
+			    ($attachments[$i]->{filename}) = $gans =~ /\s+filename=\"?(\S+)\"?/;
+			} else {$attachments[$i]->{filename} = $3; }
+			while ($gans ne "\r\n") {
+			    $gans = <$gsocket>;
+			    if ($gans =~ /^\s+$/) { next; }
+			    $attachments[$i]->{body} .= $gans;
+			}
+			$attachments[$i]->{content} = $content;
+			$attachments[$i]->{opt} = $opt;
+			$attachments[$i]->{opttype} = $opttype;
+			$attachments[$i]->{encoding} = $encoding;
+			$gans = <$gsocket>;
+			last;
+		    }
+		}
+		$gans = <$gsocket>;
+	    }
+	}
+	if ($gans !~ /^(--$boundary|\.\r\n)/i) { $gans = <$gsocket>;}
+    }
+    if (@attachments != 0) { $msgs{attachment} = @attachments; }
+    return %msgs;
+}
+
+sub parse_msg {
+    my $self = shift;
+    my $ind = shift;
+    my %msgs;
+    my $gsocket = $self->{SOCK};
+    print $gsocket "RETR $ind\r\n";
+    my ($msgl, $msgtype) = ("", 0);
+    my $gans = <$gsocket>;
+    if ($gans =~ /^\+OK\s/) {
+	do { # Getting the message headers
+	    $gans = <$gsocket>;
+	    $msgl .= $gans  if $gans =~ /^([A-Z][a-zA-Z0-9-]+:\s+|\t)/;
+	    if ($gans =~ /^Content-Type: ([a-z0-9\/-]+);\s?(?:([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?)?\r\n/i) {
+		$msgs{content} = $1;
+		if ($msgs{content} =~ /^multipart\/mixed/i) { $msgtype = 1; } # Mail content
+		if (!defined $2) {
+		    $msgl .= $gans = <$gsocket>;
+		    $gans =~ /\s+([a-z0-9-]+)=\"?([a-z0-9._=-]+)\"?\r\n/i;
+		    $msgs{opt} = $2;
+		    $msgs{opttype} = $1;
+		} else { $msgs{opt} = $3; $msgs{opttype} = $2; } # Content options (eg. name, charset)
+	    }
+	    # We need to know the encoding type
+	    if ($gans =~ /^Content-Type-Encoding: (7bit|8bit|binary|base64|quote-printable|ietf-token|x-token)\r\n/i) { $msgs{encoding} = $1; } 
+	} while ($gans ne "\r\n");
+	$msgs{headers} = $msgl;
+	$msgl = "";
+	if (!$msgtype) { $msgs{body} = $self->parse_plain_msg(); } else { %msgs = $self->parse_multipart_msg(%msgs); }
+	return %msgs;
+    } else { print "No such message number (" .  $ind  .").\r\n"; }
+}
+
 sub get_msg {
     my $self = shift;
     my %params = @_;
@@ -126,44 +264,18 @@ sub get_msg {
 	my (@msgs, $gans);
 	my $gsocket = $self->{SOCK};
 	if (exists $params{"MSG"}) {
-	    print $gsocket "RETR " . $params{"MSG"} . "\r\n";
-	    my $msgl = "";
-	    $gans = <$gsocket>;
-	    if ($gans =~ /^\+OK\s/) {
-		do {
-		    $gans = <$gsocket>;
-		    $msgl .= $gans  if $gans =~ /^([A-Z][a-zA-Z0-9-]+:\s+|\t)/;
-		} while ($gans ne "\r\n");
-		$msgs[0]->{headers} = $msgl;
-		$msgl = "";
-		do {
-		    $gans = <$gsocket>;
-		    $msgl .= $gans;
-		} while ($gans ne ".\r\n");
-		$msgs[0]->{body} = $msgl;
-		print $gsocket "DELE " . $params{"MSG"} ."\r\n" if exists $params{"DELETE"};
-		return @msgs;
-	    } else { print "No such message number (" .  $params{"MSG"}  .").\r\n"; }
+	    my %tmp = $self->parse_msg($params{"MSG"});
+	    push(@msgs, \%tmp);
+	    print $gsocket "DELE " . $params{"MSG"} . "\r\n" if exists $params{"DELETE"};
 	} else {
 	    my $total = shift(@{ $self->get_msg_nb_size() } );
 	    for (my $ind = 1; $ind < $total; $ind++) {
-		print $gsocket "RETR $ind\r\n";
-		my ($i, $msgl) = (0, "");
-		$gans = <$gsocket>;
-		if ($gans =~ /^\+OK\s/) {
-		    do {
-			$gans = <$gsocket>;
-			$msgl .= $gans  if $gans =~ /^([A-Z][a-zA-Z0-9-]+:\s+|\t)/;
-		    } while ($gans ne "\r\n");
-		    $msgs[$ind]->{headers} = $msgl;
-		    $msgl = "";
-		    for ($gans = <$gsocket>; $gans ne ".\r\n"; $gans = <$gsocket>) { $msgl .= $gans; }
-		    $msgs[$ind]->{body} = $msgl;
-		    print $gsocket "DELE $ind\r\n" if exists $params{"DELETE"};
-		} else { print "No such message number (" .  $params{"MSG"}  .").\r\n"; }
+		my %tmp = $self->parse_msg($ind);
+		push(@msgs, \%tmp);
+		print $gsocket "DELE $ind\r\n" if exists $params{"DELETE"};
 	    }
-	    return @msgs;
 	}
+	return @msgs;
     }
 }
 
@@ -253,14 +365,14 @@ GMail::Checker - Wrapper for Gmail accounts
 
 =head1 VERSION
 
-1.03
+1.04
 
 =head1 SYNOPSIS
 
     use GMail::Checker;
 
     my $gwrapper = new GMail::Checker();
-    my $gwrapper = new GMail::Checker(USERNAME => "username, PASSWORD => "password");
+    my $gwrapper = new GMail::Checker(USERNAME => "username", PASSWORD => "password");
 
     # Let's log into our account (using SSL)
     $gwrapper->login("username","password");
@@ -279,6 +391,8 @@ GMail::Checker - Wrapper for Gmail accounts
 
     # Retrieve a specific message
     my @msg = $gwrapper->get_msg(MSG => 23);
+    print $msg[0]->{content}, "\n";
+    print $msg[0]->{body};
 
     # Retrieve UIDL for a message
     my @uidl = $gwrapper->get_uidl(MSG => 10);
@@ -318,12 +432,16 @@ Your GMail password.
 
 =back 4
 
+Returns 1 if login is successfull otherwise it closes connection.
+
+We are not allowing USER and PASS on transaction state.
+
 =item C<get_msg_nb_size>
 
 
 This method checks your maildrop for the number of messages it actually contains and their total size.
 
-It returns an array which consists of (message_numbers, total_size).
+It returns an array which consists of (nb_of_msgs, total_size).
 
 Example :
 
@@ -335,7 +453,7 @@ Example :
 
 Alerts you when you have new mails in your mailbox.
 
-It takes as a hash argument ALERT which can have two values :
+It takes as a hash argument C<ALERT> which can have two values :
 
 =over 4
 
@@ -349,6 +467,8 @@ Gives you the total number of messages and the actual size of the mailbox pretti
 
 =back 4
 
+Returns a formatted string.
+
 =item C<get_msg_size>
 
 
@@ -356,21 +476,21 @@ This methods retrieves the messages size.
 
 By default, it will return an array containing all the messages with message number and its size.
 
-Given the hash argument MSG, size information will be returned for that message only.
+Given the hash argument C<MSG>, size information will be returned for that message only.
 
 Returns (-1,-1) if the mailbox is empty.
 
 Example :
 
     my @msg_sizes = $gwrapper->get_msg_size();
-    foreach $a (@msg_sizes) { print "Message number %d - size : %d", $a->{nb>, $a->{size}; }
+    foreach $a (@msg_sizes) { printf "Message number %d - size : %d", $a->{nb}, $a->{size}; }
     my @specific_msg_size = $gwrapper->get_msg_size(MSG => 2);
-    printf "Message number %d - size : %d", $specific_msg_size[0]->{nb>, $specific_msg_size[0]->{size};
+    printf "Message number %d - size : %d", $specific_msg_size[0]->{nb}, $specific_msg_size[0]->{size};
 
 =item C<get_msg>
 
 
-Retrieves a message from your mailbox and returns it as an array.
+Retrieves a message from your mailbox and returns it as an array of hash references [you will need to dereference it].
 
 If no message number is specified, it will retrieve all the mails in the mailbox.
 
@@ -386,13 +506,66 @@ The message number
 
 =item C<DELETE> 
 
-Deletes the message from the server
+Deletes the message from the server (do not specify it at all if you want to keep your mail on the server)
 
 =back 4
 
 By default the messages are kept in the mailbox.
 
 Do not forget to specify what happens to the mails that have been popped in your Gmail account settings.
+
+The array contains for each element these properties :
+
+=over 4
+
+=item C<headers>
+
+The mail headers.
+
+=item C<body>
+
+The mail body containing the message in case of a multipart message or the entire body if Content-Type holds something else.
+
+=item C<content>
+
+The content type
+
+=item <opttype>
+
+The option type for the content-type (charset, file name...)
+
+=item C<opt>
+
+The option value
+
+=item C<encoding>
+
+The message encoding type
+
+=back 4
+
+In case we have multipart/mixed messages we also have :
+
+=over 4
+
+=item C<contentmsg>
+
+The message Content-Type.
+
+=item C<opttypemsg>
+
+Same as opttype for the message, usually charset.
+
+=item C<optmsg>
+
+opttypemsg value (e.g. us-ascii).
+
+=item C<attachment>
+
+This is an array of hash references containing all the files attached to the message.
+They have the same options as above (body, content, encoding, opt, opttype).
+
+=back 4
 
 Example :
 
@@ -408,7 +581,7 @@ Retrieves a message header and returns them as an array (one header item per lin
 
 If no message number is specified, the last message headers will be retrieved.
 
-The function takes two type of arguments as hashes
+The function takes two possible arguments as hashes
 
 =over 4
 
@@ -444,6 +617,12 @@ Example :
     foreach $uid (@uidls) { print $uid->{nb}, " ", $uid->{hash}; }
     my $spec_uid = $gwrapper->get_uidl(MSG => 1);
 
+=item C<msg_to_file>
+
+Writes takes as argument the message number and writes it to the current directory to a file which name is the msg's uidl.
+
+    $gwrapper->msg_to_file(1);
+
 =item C<rset>
 
 
@@ -472,7 +651,9 @@ Faycal Chraibi <fays@cpan.org>
 
 - Include charsets conversions support
 
-- Search through mails and headers
+- Send mails
+
+- Search through mails body and headers
 
 - Include mail storing/reading option
 
